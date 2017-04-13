@@ -7,12 +7,18 @@ This project is still under development. Email Felipe at fps7806@rit.edu if you 
 
 ## Instructions
 To obtain results on NCI1 and Cora run the following commands:
+
 `python run_nci1.py`
+
 `python run_cora.py`
+
 The scripts will automatically download the datasets and run the experiments.
+
 Note that the results will not be exactly the same every run.
-Scripts will print useful information if the `self.silent = True` line is removed
-Checkpoints and Summaries that can be used with Tensorboard will be generated if the line `self.debug = True` is removed
+
+Scripts will print useful information if the `self.silent = True` line is removed.
+
+Checkpoints and Summaries that can be used with Tensorboard will be generated if the line `self.debug = True` is removed.
 
 ## NCI1 - Results
 

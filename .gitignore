@@ -2,3 +2,4 @@ summary/
 __pycache__/
 *.tgz
 snapshots/
+datasets/

@@ -31,6 +31,7 @@ class NCI1Experiment(GraphCNNExperiment):
         return input
         
 exp = NCI1Experiment()
+exp.preprocess_data(dataset)
 
-acc, std = exp.run_kfold_experiments(dataset, no_folds=10)
+acc, std = exp.run_kfold_experiments(no_folds=10)
 print_ext('10-fold %.2f: %.2f (+- %.2f)' % (GraphCNNGlobal.BN_DECAY, acc, std))

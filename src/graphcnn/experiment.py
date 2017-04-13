@@ -59,11 +59,11 @@ class GraphCNNExperiment(GraphCNNNetwork):
             return sess.run(max_acc_test), max_it
         
     # Run all folds in a CV and calculate mean/std
-    def run_kfold_experiments(self, dataset, no_folds=10):
+    def run_kfold_experiments(self, no_folds=10):
         acc = []
         for i in range(no_folds):
             tf.reset_default_graph()
-            self.set_dataset_cv(dataset, no_folds=no_folds, fold_id=i)
+            self.set_kfold(no_folds=no_folds, fold_id=i)
             cur_max, max_it = self.run()
             self.print_ext('Fold %d max accuracy: %g at %d' % (i, cur_max, max_it))
             acc.append(cur_max)
@@ -78,11 +78,9 @@ class GraphCNNExperiment(GraphCNNNetwork):
     # adjacency = list of NxLxN tensors containing L NxN adjacency matrices of the given samples
     # labels = list of sample labels
     # len(vertices) == len(adjacency) == len(labels)
-    def set_dataset_cv(self, dataset, no_folds = 10, fold_id = 0):
-        inst = KFold(n_splits = no_folds, shuffle=True, random_state=125)
-        self.fold_id = fold_id
-        
+    def preprocess_data(self, dataset):
         self.graph_size = np.array([s.shape[0] for s in dataset[0]]).astype(np.int64)
+        
         self.largest_graph = max(self.graph_size)
         self.print_ext('Padding samples')
         self.graph_vertices = []
@@ -99,9 +97,18 @@ class GraphCNNExperiment(GraphCNNNetwork):
         self.graph_adjacency = np.stack(self.graph_adjacency, axis=0)
         self.graph_labels = dataset[2].astype(np.int64)
         
-        self.KFolds = list(inst.split(self.graph_vertices))
-        self.train_idx, self.test_idx = self.KFolds[fold_id]
         self.no_samples = self.graph_labels.shape[0]
+        
+        single_sample = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
+        self.graph_extra = self.preprocess_extra_data(single_sample)
+        
+    # Create CV information
+    def set_kfold(self, no_folds = 10, fold_id = 0):
+        inst = KFold(n_splits = no_folds, shuffle=True, random_state=125)
+        self.fold_id = fold_id
+        
+        self.KFolds = list(inst.split(np.arange(self.no_samples)))
+        self.train_idx, self.test_idx = self.KFolds[fold_id]
         self.no_samples_train = self.train_idx.shape[0]
         self.no_samples_test = self.test_idx.shape[0]
         self.print_ext('Data ready. no_samples_train:', self.no_samples_train, 'no_samples_test:', self.no_samples_test)
@@ -110,6 +117,8 @@ class GraphCNNExperiment(GraphCNNNetwork):
             self.train_batch_size = self.no_samples_train
         if self.test_batch_size == 0:
             self.test_batch_size = self.no_samples_test
+        self.train_batch_size = min(self.train_batch_size, self.no_samples_train)
+        self.test_batch_size = min(self.test_batch_size, self.no_samples_test)
         
     # This function is cropped before batch
     # Slice each sample to improve performance
@@ -120,7 +129,7 @@ class GraphCNNExperiment(GraphCNNNetwork):
         adjacency.set_shape([None, self.graph_adjacency.shape[2], None])
         
         # V, A, labels, mask, extra
-        return [vertices, adjacency, single_sample[2], tf.expand_dims(tf.ones(tf.slice(tf.shape(vertices), [0], [1])), axis=-1)] + self.crop_preprocessed_data(single_sample[4:], single_sample[3])
+        return [vertices, adjacency, single_sample[2], tf.expand_dims(tf.ones(tf.slice(tf.shape(vertices), [0], [1])), axis=-1)] + self.crop_extra_data(single_sample[4:], single_sample[3])
         
     # Create input_producers and batch queues
     def create_data(self, cond):
@@ -136,22 +145,17 @@ class GraphCNNExperiment(GraphCNNNetwork):
                 self.print_ext('Creating training Tensorflow Tensors')
                 
                 # Create tensor with all training samples
-                input_vertices = self.graph_vertices[self.train_idx, ...]
-                input_adjacency = self.graph_adjacency[self.train_idx, ...]
-                input_labels = self.graph_labels[self.train_idx, ...]
-                input_size = self.graph_size[self.train_idx]
+                training_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size] + self.graph_extra
+                training_samples = [s[self.train_idx, ...] for s in training_samples]
                 
-                # preprocess_data, not used in current experiments.
-                single_sample = [input_vertices, input_adjacency, input_labels, input_size]
-                single_sample += self.preprocess_data(single_sample)
                 if self.crop_if_possible == False:
-                    single_sample[3] = get_node_mask(input_size)
+                    training_samples[3] = get_node_mask(training_samples[3], max_size=self.graph_vertices.shape[1])
                     
                 # Create tf.constants
-                single_sample = [tf.constant(s) for s in single_sample]
+                training_samples = [tf.constant(s) for s in training_samples]
                 
                 # Slice first dimension to obtain samples
-                single_sample = tf.train.slice_input_producer(single_sample, shuffle=True, capacity=self.train_batch_size, seed=seed)
+                single_sample = tf.train.slice_input_producer(training_samples, shuffle=True, capacity=self.train_batch_size, seed=seed)
                 
                 # Cropping samples improves performance but is not required
                 if self.crop_if_possible:
@@ -166,20 +170,16 @@ class GraphCNNExperiment(GraphCNNNetwork):
                 self.print_ext('Creating test Tensorflow Tensors')
                 
                 # Create tensor with all test samples
-                input_vertices = self.graph_vertices[self.test_idx, ...]
-                input_adjacency = self.graph_adjacency[self.test_idx, ...]
-                input_labels = self.graph_labels[self.test_idx, ...]
-                input_size = self.graph_size[self.test_idx]
+                test_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size] + self.graph_extra
+                test_samples = [s[self.test_idx, ...] for s in test_samples]
                 
                 # If using mini-batch we will need a queue 
                 if self.test_batch_size != self.no_samples_test:
-                    single_sample = [input_vertices, input_adjacency, input_labels, input_size]
-                    single_sample += self.preprocess_data(single_sample)
                     if self.crop_if_possible == False:
-                        single_sample[3] = get_node_mask(input_size)
-                    single_sample = [tf.constant(s) for s in single_sample]
+                        test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
+                    test_samples = [tf.constant(s) for s in test_samples]
                     
-                    single_sample = tf.train.slice_input_producer(single_sample, shuffle=True, capacity=self.test_batch_size, seed=seed)
+                    single_sample = tf.train.slice_input_producer(test_samples, shuffle=True, capacity=self.test_batch_size, seed=seed)
                     if self.crop_if_possible:
                         single_sample = self.crop_single_sample(single_sample)
                         
@@ -187,14 +187,7 @@ class GraphCNNExperiment(GraphCNNNetwork):
                     
                 # If using full-batch no need for queues
                 else:
-                    input_mask = get_node_mask(input_size)
-                    input_vertices = input_vertices[:, :input_mask.shape[1], ...]
-                    input_adjacency = input_adjacency[:, :input_mask.shape[1], :, :input_mask.shape[1]]
-                    
-                    test_samples = [input_vertices, input_adjacency, input_labels, input_size]
-                    test_samples += self.preprocess_data(test_samples)
-                    
-                    test_samples[3] = input_mask
+                    test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
                     test_samples = [tf.constant(s) for s in test_samples]
                     
             # obtain batch depending on is_training and if test is a queue
@@ -378,26 +371,19 @@ class GraphCNNExperiment(GraphCNNNetwork):
 # BatchNormalization during test follows same behavior as training
 # Loss function requires a mask that selects samples to report accuracy on.
 class SingleGraphCNNExperiment(GraphCNNExperiment):
-    def set_dataset_cv(self, dataset, no_folds = 10, fold_id = 0):
-        inst = KFold(n_splits = no_folds, shuffle=True, random_state=125)
-        self.fold_id = fold_id
-        self.KFolds = list(inst.split(dataset[0]))
-        self.train_idx, self.test_idx = self.KFolds[fold_id]
-        
-        self.graph_size = dataset[0].shape[0]
+
+    def preprocess_data(self, dataset):
+        self.largest_graph = dataset[0].shape[0]
+        self.graph_size = [self.largest_graph]
         
         self.graph_vertices = np.expand_dims(dataset[0].astype(np.float32), axis=0)
         self.graph_adjacency = np.expand_dims(dataset[1].astype(np.float32), axis=0)
         self.graph_labels = np.expand_dims(dataset[2].astype(np.int64), axis=0)
         
-        self.no_samples_train = self.train_idx.shape[0]
-        self.no_samples_test = self.test_idx.shape[0]
-        self.print_ext('Data ready. no_samples_train:', self.no_samples_train, 'no_samples_test:', self.no_samples_test)
+        self.no_samples = self.graph_labels.shape[1]
         
-        if self.train_batch_size == 0:
-            self.train_batch_size = self.no_samples_train
-        if self.test_batch_size == 0:
-            self.test_batch_size = self.no_samples_test
+        single_sample = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
+        self.graph_extra = self.preprocess_extra_data(single_sample)
             
             
     def make_batchnorm_layer(self, name=None):
@@ -428,7 +414,7 @@ class SingleGraphCNNExperiment(GraphCNNExperiment):
         adjacency = tf.constant(self.graph_adjacency)
         labels = tf.constant(self.graph_labels)
         
-        input_mask = np.zeros([1, self.graph_size, 1]).astype(np.float32)
+        input_mask = np.zeros([1, self.largest_graph, 1]).astype(np.float32)
         input_mask[:, self.test_idx, :] = 1
         test_input = [vertices, adjacency, labels, tf.constant(input_mask)]
         

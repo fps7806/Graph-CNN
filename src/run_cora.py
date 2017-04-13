@@ -31,5 +31,7 @@ class CoraExperiment(SingleGraphCNNExperiment):
         return input
         
 exp = CoraExperiment()
-acc, std = exp.run_kfold_experiments(dataset, no_folds=10)
+exp.preprocess_data(dataset)
+
+acc, std = exp.run_kfold_experiments(no_folds=10)
 print_ext('10-fold: %.2f (+- %.2f)' % (acc, std))

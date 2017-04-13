@@ -14,10 +14,10 @@ class GraphCNNNetwork(object):
         
         return input
             
-    def preprocess_data(self, input):
+    def preprocess_extra_data(self, input):
         return []
         
-    def crop_preprocessed_data(self, preprocess_data, size):
+    def crop_extra_data(self, preprocess_data, size):
         return preprocess_data
         
     def make_batchnorm_layer(self):
@@ -47,7 +47,7 @@ class GraphCNNNetwork(object):
                 self.current_V = tf.nn.relu(self.current_V)
             if self.network_debug:
                 batch_mean, batch_var = tf.nn.moments(self.current_V, np.arange(len(self.current_V.get_shape())-1))
-                self.current_V = tf.Print(self.current_V, [tf.shape(self.current_V), batch_mean, batch_var], message='Pool "%s" V Shape, Mean, Var:' % name)
+                self.current_V = tf.Print(self.current_V, [tf.shape(self.current_V), batch_mean, batch_var], message='"%s" V Shape, Mean, Var:' % scope.name)
         return self.current_V
         
     def make_graph_embed_pooling(self, no_vertices=1, name=None, with_bn=True, with_act_func=True):
@@ -60,7 +60,7 @@ class GraphCNNNetwork(object):
                 self.current_V = tf.nn.relu(self.current_V)
             if self.network_debug:
                 batch_mean, batch_var = tf.nn.moments(self.current_V, np.arange(len(self.current_V.get_shape())-1))
-                self.current_V = tf.Print(self.current_V, [tf.shape(self.current_V), batch_mean, batch_var], message='Pool "%s" V Shape, Mean, Var:' % name)
+                self.current_V = tf.Print(self.current_V, [tf.shape(self.current_V), batch_mean, batch_var], message='Pool "%s" V Shape, Mean, Var:' % scope.name)
         return self.current_V, self.current_A, self.current_mask
             
     def make_fc_layer(self, no_filters, name=None, with_bn=False, with_act_func=True):
