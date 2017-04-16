@@ -1,24 +1,26 @@
 from graphcnn.layers import *
+from graphcnn.network_description import GraphCNNNetworkDescription
 
 class GraphCNNNetwork(object):
     def __init__(self):
         self.current_V = None
         self.current_A = None
         self.current_mask = None
+        self.labels = None
         self.network_debug = False
         
     def create_network(self, input):
         self.current_V = input[0]
         self.current_A = input[1]
+        self.labels = input[2]
         self.current_mask = input[3]
         
-        return input
-            
-    def preprocess_extra_data(self, input):
-        return []
+        if self.network_debug:
+            size = tf.reduce_sum(self.current_mask, axis=1)
+            self.current_V = tf.Print(self.current_V, [tf.shape(self.current_V), tf.reduce_max(size), tf.reduce_mean(size)], message='Input V Shape, Max size, Avg. Size:')
         
-    def crop_extra_data(self, preprocess_data, size):
-        return preprocess_data
+        return input
+        
         
     def make_batchnorm_layer(self):
         self.current_V = make_bn(self.current_V, self.is_training, mask=self.current_mask, num_updates = self.global_step)

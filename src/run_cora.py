@@ -3,34 +3,31 @@ from graphcnn.experiment import *
 
 dataset = sc.load_cora_dataset()
 
-class CoraExperiment(SingleGraphCNNExperiment):
-    def __init__(self):
-        SingleGraphCNNExperiment.__init__(self, 'Cora', 'cora')
-        self.num_iterations = 1000
-        self.optimizer = 'adam'
-        self.debug = True
-        self.silent = True
+class CoraExperiment():
+    def create_network(self, net, input):
+        net.create_network(input)
+        net.make_embedding_layer(256)
+        net.make_dropout_layer()
         
-    def create_network(self, input):
-        SingleGraphCNNExperiment.create_network(self, input)
-        self.make_embedding_layer(256)
-        self.make_dropout_layer()
-        
-        self.make_graphcnn_layer(48)
-        self.make_dropout_layer()
-        self.make_embedding_layer(32)
-        self.make_dropout_layer()
+        net.make_graphcnn_layer(48)
+        net.make_dropout_layer()
+        net.make_embedding_layer(32)
+        net.make_dropout_layer()
         
         
-        self.make_graphcnn_layer(48)
-        self.make_dropout_layer()
-        self.make_embedding_layer(32)
-        self.make_dropout_layer()
+        net.make_graphcnn_layer(48)
+        net.make_dropout_layer()
+        net.make_embedding_layer(32)
+        net.make_dropout_layer()
         
-        input[0] =  self.make_graphcnn_layer(7, name='final', with_bn=False, with_act_func = False)
-        return input
+        net.make_graphcnn_layer(7, name='final', with_bn=False, with_act_func = False)
         
-exp = CoraExperiment()
+exp = SingleGraphCNNExperiment('Cora', 'cora', CoraExperiment())
+
+exp.num_iterations = 1000
+exp.optimizer = 'adam'
+exp.debug = True
+        
 exp.preprocess_data(dataset)
 
 acc, std = exp.run_kfold_experiments(no_folds=10)

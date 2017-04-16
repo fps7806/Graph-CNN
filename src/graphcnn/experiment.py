@@ -1,5 +1,5 @@
 from graphcnn.helper import *
-from graphcnn.network import GraphCNNNetwork
+from graphcnn.network import *
 from graphcnn.layers import *
 from sklearn.model_selection import KFold
 import numpy as np
@@ -20,10 +20,9 @@ def _make_batch_queue(input, capacity, num_threads=1):
 
 # This class is responsible for setting up and running experiments
 # Also provides helper functions related to experiments (e.g. get accuracy)
-class GraphCNNExperiment(GraphCNNNetwork):
-    def __init__(self, dataset_name, model_name):
+class GraphCNNExperiment(object):
+    def __init__(self, dataset_name, model_name, net_constructor):
         # Initialize all defaults
-        GraphCNNNetwork.__init__(self)
         self.dataset_name = dataset_name
         self.model_name = model_name
         self.num_iterations = 200
@@ -40,6 +39,10 @@ class GraphCNNExperiment(GraphCNNNetwork):
         self.reports = {}
         self.silent = False
         self.optimizer = 'momentum'
+        
+        self.net_constructor = net_constructor
+        self.net = GraphCNNNetwork()
+        self.net_desc = GraphCNNNetworkDescription()
         tf.reset_default_graph()
         
     # print_ext can be disabled through the silent flag
@@ -61,6 +64,11 @@ class GraphCNNExperiment(GraphCNNNetwork):
     # Run all folds in a CV and calculate mean/std
     def run_kfold_experiments(self, no_folds=10):
         acc = []
+        
+        self.net_constructor.create_network(self.net_desc, [])
+        desc = self.net_desc.get_description()
+        self.print_ext('Running CV for:', desc)
+        start_time = time.time()
         for i in range(no_folds):
             tf.reset_default_graph()
             self.set_kfold(no_folds=no_folds, fold_id=i)
@@ -71,6 +79,10 @@ class GraphCNNExperiment(GraphCNNNetwork):
         mean_acc= np.mean(acc)*100
         std_acc = np.std(acc)*100
         self.print_ext('Result is: %.2f (+- %.2f)' % (mean_acc, std_acc))
+        
+        verify_dir_exists('./results/')
+        with open('./results/%s.txt' % self.dataset_name, 'a+') as file:
+            file.write('%s\t%s\t%d-fold\t%d seconds\t%.2f (+- %.2f)\n' % (str(datetime.now()), desc, no_folds, time.time()-start_time, mean_acc, std_acc))
         return mean_acc, std_acc
         
     # Prepares samples for experiment, accepts a list (vertices, adjacency, labels) where:
@@ -100,7 +112,6 @@ class GraphCNNExperiment(GraphCNNNetwork):
         self.no_samples = self.graph_labels.shape[0]
         
         single_sample = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
-        self.graph_extra = self.preprocess_extra_data(single_sample)
         
     # Create CV information
     def set_kfold(self, no_folds = 10, fold_id = 0):
@@ -128,88 +139,90 @@ class GraphCNNExperiment(GraphCNNNetwork):
         adjacency = tf.slice(single_sample[1], np.array([0, 0, 0], dtype=np.int64), tf.cast(tf.stack([single_sample[3], -1, single_sample[3]]), tf.int64))
         adjacency.set_shape([None, self.graph_adjacency.shape[2], None])
         
-        # V, A, labels, mask, extra
-        return [vertices, adjacency, single_sample[2], tf.expand_dims(tf.ones(tf.slice(tf.shape(vertices), [0], [1])), axis=-1)] + self.crop_extra_data(single_sample[4:], single_sample[3])
+        # V, A, labels, mask
+        return [vertices, adjacency, single_sample[2], tf.expand_dims(tf.ones(tf.slice(tf.shape(vertices), [0], [1])), axis=-1)]
         
+    def create_input_variable(self, input):
+        for i in range(len(input)):
+            placeholder = tf.placeholder(tf.as_dtype(input[i].dtype), shape=input[i].shape)
+            var = tf.Variable(placeholder, trainable=False, collections=[tf.GraphKeys.LOCAL_VARIABLES])
+            self.variable_initialization[placeholder] = input[i]
+            input[i] = var
+        return input
     # Create input_producers and batch queues
-    def create_data(self, cond):
-        if self.debug:
-            seed = 102
-        else:
-            seed = None
-    
+    def create_data(self):
         with tf.device("/cpu:0"):
-        
-            # Create the training queue
-            with tf.variable_scope('train_data') as scope:
-                self.print_ext('Creating training Tensorflow Tensors')
-                
-                # Create tensor with all training samples
-                training_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size] + self.graph_extra
-                training_samples = [s[self.train_idx, ...] for s in training_samples]
-                
-                if self.crop_if_possible == False:
-                    training_samples[3] = get_node_mask(training_samples[3], max_size=self.graph_vertices.shape[1])
+            with tf.variable_scope('input') as scope:
+                # Create the training queue
+                with tf.variable_scope('train_data') as scope:
+                    self.print_ext('Creating training Tensorflow Tensors')
                     
-                # Create tf.constants
-                training_samples = [tf.constant(s) for s in training_samples]
-                
-                # Slice first dimension to obtain samples
-                single_sample = tf.train.slice_input_producer(training_samples, shuffle=True, capacity=self.train_batch_size, seed=seed)
-                
-                # Cropping samples improves performance but is not required
-                if self.crop_if_possible:
-                    self.print_ext('Cropping smaller graphs')
-                    single_sample = self.crop_single_sample(single_sample)
-                
-                # creates training batch queue
-                train_queue = _make_batch_queue(single_sample, capacity=self.train_batch_size*2, num_threads=6)
-
-            # Create the test queue
-            with tf.variable_scope('test_data') as scope:
-                self.print_ext('Creating test Tensorflow Tensors')
-                
-                # Create tensor with all test samples
-                test_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size] + self.graph_extra
-                test_samples = [s[self.test_idx, ...] for s in test_samples]
-                
-                # If using mini-batch we will need a queue 
-                if self.test_batch_size != self.no_samples_test:
+                    # Create tensor with all training samples
+                    training_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
+                    training_samples = [s[self.train_idx, ...] for s in training_samples]
+                    
                     if self.crop_if_possible == False:
-                        test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
-                    test_samples = [tf.constant(s) for s in test_samples]
-                    
-                    single_sample = tf.train.slice_input_producer(test_samples, shuffle=True, capacity=self.test_batch_size, seed=seed)
-                    if self.crop_if_possible:
-                        single_sample = self.crop_single_sample(single_sample)
+                        training_samples[3] = get_node_mask(training_samples[3], max_size=self.graph_vertices.shape[1])
                         
-                    test_queue = _make_batch_queue(single_sample, capacity=self.test_batch_size*2, num_threads=1)
+                    # Create tf.constants
+                    training_samples = self.create_input_variable(training_samples)
                     
-                # If using full-batch no need for queues
-                else:
-                    test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
-                    test_samples = [tf.constant(s) for s in test_samples]
+                    # Slice first dimension to obtain samples
+                    single_sample = tf.train.slice_input_producer(training_samples, shuffle=True, capacity=self.train_batch_size)
                     
-            # obtain batch depending on is_training and if test is a queue
-            if self.test_batch_size == self.no_samples_test:
-                return tf.cond(cond, lambda: train_queue.dequeue_many(self.train_batch_size), lambda: test_samples)
-            return tf.cond(cond, lambda: train_queue.dequeue_many(self.train_batch_size), lambda: test_queue.dequeue_many(self.test_batch_size))
+                    # Cropping samples improves performance but is not required
+                    if self.crop_if_possible:
+                        self.print_ext('Cropping smaller graphs')
+                        single_sample = self.crop_single_sample(single_sample)
+                    
+                    # creates training batch queue
+                    train_queue = _make_batch_queue(single_sample, capacity=self.train_batch_size*2, num_threads=6)
+
+                # Create the test queue
+                with tf.variable_scope('test_data') as scope:
+                    self.print_ext('Creating test Tensorflow Tensors')
+                    
+                    # Create tensor with all test samples
+                    test_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
+                    test_samples = [s[self.test_idx, ...] for s in test_samples]
+                    
+                    # If using mini-batch we will need a queue 
+                    if self.test_batch_size != self.no_samples_test:
+                        if self.crop_if_possible == False:
+                            test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
+                        test_samples = self.create_input_variable(test_samples)
+                        
+                        single_sample = tf.train.slice_input_producer(test_samples, shuffle=True, capacity=self.test_batch_size)
+                        if self.crop_if_possible:
+                            single_sample = self.crop_single_sample(single_sample)
+                            
+                        test_queue = _make_batch_queue(single_sample, capacity=self.test_batch_size*2, num_threads=1)
+                        
+                    # If using full-batch no need for queues
+                    else:
+                        test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
+                        test_samples = self.create_input_variable(test_samples)
+                        
+                # obtain batch depending on is_training and if test is a queue
+                if self.test_batch_size == self.no_samples_test:
+                    return tf.cond(self.net.is_training, lambda: train_queue.dequeue_many(self.train_batch_size), lambda: test_samples)
+                return tf.cond(self.net.is_training, lambda: train_queue.dequeue_many(self.train_batch_size), lambda: test_queue.dequeue_many(self.test_batch_size))
      
     # Function called with the output of the Graph-CNN model
     # Should add the loss to the 'losses' collection and add any summaries needed (e.g. accuracy) 
-    def create_loss_function(self, input, is_training):
+    def create_loss_function(self):
         with tf.variable_scope('loss') as scope:
             self.print_ext('Creating loss function and summaries')
-            cross_entropy = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=input[0], labels=input[2]))
+            cross_entropy = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.net.current_V, labels=self.net.labels))
 
-            correct_prediction = tf.cast(tf.equal(tf.argmax(input[0], 1), input[2]), tf.float32)
+            correct_prediction = tf.cast(tf.equal(tf.argmax(self.net.current_V, 1), self.net.labels), tf.float32)
             accuracy = tf.reduce_mean(correct_prediction)
             
             # we have 2 variables that will keep track of the best accuracy obtained in training/testing batch
             # SHOULD ONLY BE USED IF test_batch_size == ALL TEST SAMPLES
             self.max_acc_train = tf.Variable(tf.zeros([]), name="max_acc_train")
             self.max_acc_test = tf.Variable(tf.zeros([]), name="max_acc_test")
-            max_acc = tf.cond(is_training, lambda: tf.assign(self.max_acc_train, tf.maximum(self.max_acc_train, accuracy)), lambda: tf.assign(self.max_acc_test, tf.maximum(self.max_acc_test, accuracy)))
+            max_acc = tf.cond(self.net.is_training, lambda: tf.assign(self.max_acc_train, tf.maximum(self.max_acc_train, accuracy)), lambda: tf.assign(self.max_acc_test, tf.maximum(self.max_acc_test, accuracy)))
             
             tf.add_to_collection('losses', cross_entropy)
             tf.summary.scalar('accuracy', accuracy)
@@ -251,10 +264,12 @@ class GraphCNNExperiment(GraphCNNNetwork):
     # Report summaries if silent == false
     # start/end threads
     def run(self):
+        self.variable_initialization = {}
+        
         self.print_ext('Training model "%s"!' % self.model_name)
-        self.snapshot_path = './../snapshots/%s/%s/' % (self.dataset_name, self.model_name + '_fold%d' % self.fold_id)
-        self.test_summary_path = './../summary/%s/test/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
-        self.train_summary_path = './../summary/%s/train/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
+        self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name + '_fold%d' % self.fold_id)
+        self.test_summary_path = './summary/%s/test/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
+        self.train_summary_path = './summary/%s/train/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
         if self.debug:
             i = 0
         else:
@@ -262,36 +277,35 @@ class GraphCNNExperiment(GraphCNNNetwork):
         if i < self.num_iterations:
             self.print_ext('Creating training network')
             
-            self.is_training = tf.placeholder(tf.bool, shape=())
-            self.global_step = tf.Variable(0,name='global_step',trainable=False)
+            self.net.is_training = tf.placeholder(tf.bool, shape=())
+            self.net.global_step = tf.Variable(0,name='global_step',trainable=False)
             
             
-            input = self.create_data(self.is_training)
-            train_network = self.create_network(input)
-            self.create_loss_function(train_network, self.is_training)
+            input = self.create_data()
+            self.net_constructor.create_network(self.net, input)
+            self.create_loss_function()
             
             self.print_ext('Preparing training')
             loss = tf.add_n(tf.get_collection('losses'))
             if len(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)) > 0:
                 loss += tf.add_n(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
                 
-            self.reports['loss'] = loss
-            tf.summary.scalar('loss', loss)
             update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
             
             
             
             with tf.control_dependencies(update_ops):
                 if self.optimizer == 'adam':
-                    train_step = tf.train.AdamOptimizer().minimize(loss, global_step=self.global_step)
+                    train_step = tf.train.AdamOptimizer().minimize(loss, global_step=self.net.global_step)
                 else:
-                    self.learning_rate = tf.train.exponential_decay(self.starter_learning_rate, self.global_step, self.learning_rate_step, self.learning_rate_exp, staircase=True)
-                    train_step = tf.train.MomentumOptimizer(self.learning_rate, 0.9).minimize(loss, global_step=self.global_step)
+                    self.learning_rate = tf.train.exponential_decay(self.starter_learning_rate, self.net.global_step, self.learning_rate_step, self.learning_rate_exp, staircase=True)
+                    train_step = tf.train.MomentumOptimizer(self.learning_rate, 0.9).minimize(loss, global_step=self.net.global_step)
                     self.reports['lr'] = self.learning_rate
                     tf.summary.scalar('learning_rate', self.learning_rate)
             
             with tf.Session() as sess:
                 sess.run(tf.global_variables_initializer())
+                sess.run(tf.local_variables_initializer(), self.variable_initialization)
                 
                 if self.debug == False:
                     saver = tf.train.Saver()
@@ -301,8 +315,7 @@ class GraphCNNExperiment(GraphCNNNetwork):
                     test_writer = tf.summary.FileWriter(self.test_summary_path, sess.graph)
                     train_writer = tf.summary.FileWriter(self.train_summary_path, sess.graph)
             
-                train_merged = tf.summary.merge_all()
-                test_merged = tf.summary.merge_all()
+                summary_merged = tf.summary.merge_all()
             
                 self.print_ext('Starting threads')
                 coord = tf.train.Coordinator()
@@ -319,7 +332,7 @@ class GraphCNNExperiment(GraphCNNNetwork):
                             self.save_model(sess, saver, i)
                         if i % self.iterations_per_test == 0:
                             start_temp = time.time()
-                            summary, reports = sess.run([test_merged, self.reports], feed_dict={self.is_training:0})
+                            summary, reports = sess.run([summary_merged, self.reports], feed_dict={self.net.is_training:0})
                             total_testing += time.time() - start_temp
                             self.print_ext('Test Step %d Finished' % i)
                             for key, value in reports.items():
@@ -328,7 +341,7 @@ class GraphCNNExperiment(GraphCNNNetwork):
                                 test_writer.add_summary(summary, i)
                             
                         start_temp = time.time()
-                        summary, _, reports = sess.run([train_merged, train_step, self.reports], feed_dict={self.is_training:1})
+                        summary, _, reports = sess.run([summary_merged, train_step, self.reports], feed_dict={self.net.is_training:1})
                         total_training += time.time() - start_temp
                         i += 1
                         if ((i-1) % self.display_iter) == 0:
@@ -344,7 +357,7 @@ class GraphCNNExperiment(GraphCNNNetwork):
                             total_testing = 0.0
                             start_at = time.time()
                     if i % self.iterations_per_test == 0:
-                        summary = sess.run(test_merged, feed_dict={self.is_training:0})
+                        summary = sess.run(summary_merged, feed_dict={self.net.is_training:0})
                         if self.debug == False:
                             test_writer.add_summary(summary, i)
                         self.print_ext('Test Step %d Finished' % i)
@@ -362,7 +375,7 @@ class GraphCNNExperiment(GraphCNNNetwork):
                     if wasKeyboardInterrupt:
                         raise raisedEx
                 
-                return sess.run([self.max_acc_test, self.global_step])
+                return sess.run([self.max_acc_test, self.net.global_step])
         else:
             self.print_ext('Model "%s" already trained!' % self.model_name)
             return self.get_max_accuracy()
@@ -383,8 +396,6 @@ class SingleGraphCNNExperiment(GraphCNNExperiment):
         self.no_samples = self.graph_labels.shape[1]
         
         single_sample = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
-        self.graph_extra = self.preprocess_extra_data(single_sample)
-            
             
     def make_batchnorm_layer(self, name=None):
         axis = -1
@@ -399,38 +410,42 @@ class SingleGraphCNNExperiment(GraphCNNExperiment):
             beta = make_bias_variable('bias', input_size)
             self.current_V = tf.nn.batch_normalization(self.current_V, batch_mean, batch_var, beta, gamma, 1e-3)
             return self.current_V
-    def create_data(self, cond, batch_size=1):
-        self.print_ext('Creating training Tensorflow Tensors')
+    def create_data(self):
+        with tf.device("/cpu:0"):
+            with tf.variable_scope('input') as scope:
+                self.print_ext('Creating training Tensorflow Tensors')
+                
+                vertices = self.graph_vertices[:, self.train_idx, :]
+                adjacency = self.graph_adjacency[:, self.train_idx, :, :]
+                adjacency = adjacency[:, :, :, self.train_idx]
+                labels = self.graph_labels[:, self.train_idx]
+                input_mask = np.ones([1, len(self.train_idx), 1]).astype(np.float32)
+                
+                train_input = [vertices, adjacency, labels, input_mask]
+                train_input = self.create_input_variable(train_input)
+                
+                vertices = self.graph_vertices
+                adjacency = self.graph_adjacency
+                labels = self.graph_labels
+                
+                input_mask = np.zeros([1, self.largest_graph, 1]).astype(np.float32)
+                input_mask[:, self.test_idx, :] = 1
+                test_input = [vertices, adjacency, labels, input_mask]
+                test_input = self.create_input_variable(test_input)
+                
+                return tf.cond(self.net.is_training, lambda: train_input, lambda: test_input)
         
-        vertices = tf.constant(self.graph_vertices[:, self.train_idx, :])
-        adjacency = self.graph_adjacency[:, self.train_idx, :, :]
-        adjacency = tf.constant(adjacency[:, :, :, self.train_idx])
-        labels = tf.constant(self.graph_labels[:, self.train_idx])
-        input_mask = np.ones([1, len(self.train_idx), 1]).astype(np.float32)
-        
-        train_input = [vertices, adjacency, labels, tf.constant(input_mask)]
-        
-        vertices = tf.constant(self.graph_vertices)
-        adjacency = tf.constant(self.graph_adjacency)
-        labels = tf.constant(self.graph_labels)
-        
-        input_mask = np.zeros([1, self.largest_graph, 1]).astype(np.float32)
-        input_mask[:, self.test_idx, :] = 1
-        test_input = [vertices, adjacency, labels, tf.constant(input_mask)]
-        
-        return tf.cond(cond, lambda: train_input, lambda: test_input)
-        
-    def create_loss_function(self, input, is_training):
+    def create_loss_function(self):
         self.print_ext('Creating loss function and summaries')
         
         with tf.variable_scope('loss') as scope:
-            inv_sum = (1./tf.reduce_sum(input[3]))
-            cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=input[0], labels=input[2])
-            cross_entropy = tf.multiply(tf.squeeze(input[3]), tf.squeeze(cross_entropy))
+            inv_sum = (1./tf.reduce_sum(self.net.current_mask))
+            cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.net.current_V, labels=self.net.labels)
+            cross_entropy = tf.multiply(tf.squeeze(self.net.current_mask), tf.squeeze(cross_entropy))
             cross_entropy = tf.reduce_sum(cross_entropy)*inv_sum
 
-            correct_prediction = tf.cast(tf.equal(tf.argmax(input[0], 2), input[2]), tf.float32)
-            correct_prediction = tf.multiply(tf.squeeze(input[3]), tf.squeeze(correct_prediction))
+            correct_prediction = tf.cast(tf.equal(tf.argmax(self.net.current_V, 2), self.net.labels), tf.float32)
+            correct_prediction = tf.multiply(tf.squeeze(self.net.current_mask), tf.squeeze(correct_prediction))
             accuracy = tf.reduce_sum(correct_prediction)*inv_sum
             
             tf.add_to_collection('losses', cross_entropy)
@@ -439,7 +454,7 @@ class SingleGraphCNNExperiment(GraphCNNExperiment):
             self.max_acc_train = tf.Variable(tf.zeros([]), name="max_acc_train")
             self.max_acc_test = tf.Variable(tf.zeros([]), name="max_acc_test")
             
-            max_acc = tf.cond(is_training, lambda: tf.assign(self.max_acc_train, tf.maximum(self.max_acc_train, accuracy)), lambda: tf.assign(self.max_acc_test, tf.maximum(self.max_acc_test, accuracy)))
+            max_acc = tf.cond(self.net.is_training, lambda: tf.assign(self.max_acc_train, tf.maximum(self.max_acc_train, accuracy)), lambda: tf.assign(self.max_acc_test, tf.maximum(self.max_acc_test, accuracy)))
             
             tf.summary.scalar('max_accuracy', max_acc)
             tf.summary.scalar('accuracy', accuracy)

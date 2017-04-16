@@ -2,7 +2,7 @@ from graphcnn.helper import *
 import time
 import os
 
-_default_location = '../datasets/'
+_default_location = 'datasets/'
 
 def get_file_location(file):
     return _default_location + file
