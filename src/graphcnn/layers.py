@@ -14,7 +14,7 @@ def make_bias_variable(name, shape):
     var = tf.get_variable(name, shape, initializer=tf.constant_initializer(0.1), dtype=dtype)
     return var
 
-def make_variable_with_weight_decay(name, shape, stddev=0.01, wd=0.00):
+def make_variable_with_weight_decay(name, shape, stddev=0.01, wd=0.0005):
     dtype = tf.float32
     regularizer = None
     if wd is not None and wd > 1e-7:

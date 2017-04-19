@@ -267,9 +267,14 @@ class GraphCNNExperiment(object):
         self.variable_initialization = {}
         
         self.print_ext('Training model "%s"!' % self.model_name)
-        self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name + '_fold%d' % self.fold_id)
-        self.test_summary_path = './summary/%s/test/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
-        self.train_summary_path = './summary/%s/train/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
+        if hasattr(self, 'fold_id') and self.fold_id:
+            self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name + '_fold%d' % self.fold_id)
+            self.test_summary_path = './summary/%s/test/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
+            self.train_summary_path = './summary/%s/train/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
+        else:
+            self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name)
+            self.test_summary_path = './summary/%s/test/%s' %(self.dataset_name, self.model_name)
+            self.train_summary_path = './summary/%s/train/%s' %(self.dataset_name, self.model_name)
         if self.debug:
             i = 0
         else:

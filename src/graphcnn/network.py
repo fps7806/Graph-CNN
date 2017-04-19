@@ -78,3 +78,27 @@ class GraphCNNNetwork(object):
             if with_act_func:
                 self.current_V = tf.nn.relu(self.current_V)
         return self.current_V
+        
+        
+    def make_cnn_layer(self, no_filters, name=None, with_bn=False, with_act_func=True, filter_size=3, stride=1, padding='SAME'):
+        with tf.variable_scope(None, default_name='conv') as scope:
+            dim = self.current_V.get_shape()[-1]
+            kernel = make_variable_with_weight_decay('weights',
+                                                 shape=[filter_size, filter_size, dim, no_filters],
+                                                 stddev=math.sqrt(1.0/(no_filters*filter_size*filter_size)),
+                                                 wd=0.0005)
+            conv = tf.nn.conv2d(self.current_V, kernel, [1, stride, stride, 1], padding=padding)
+            biases = make_bias_variable('biases', [no_filters])
+            self.current_V = tf.nn.bias_add(conv, biases)
+            if with_bn:
+                self.make_batchnorm_layer()
+            if with_act_func:
+                self.current_V = tf.nn.relu(self.current_V)
+            return self.current_V
+            
+    def make_pool_layer(self, padding='SAME'):
+        with tf.variable_scope(None, default_name='pool') as scope:
+            dim = self.current_V.get_shape()[-1]
+            self.current_V = tf.nn.max_pool(self.current_V, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1], padding=padding, name=scope.name)
+
+            return self.current_V

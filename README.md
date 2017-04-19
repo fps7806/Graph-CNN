@@ -22,6 +22,8 @@ Scripts will print useful information. Can be disabled by adding `exp.silent = T
 
 Checkpoints and Summaries that can be used with Tensorboard will be generated if the line `self.debug = True` is removed.
 
+There is an example on how to run experiments on ImageNet under `src/run_alexnet.py`. The training was not optimized so the final accuracy might not match the expected.
+
 ## NCI1 - Results
 
 | Model        | File | Accuracy           |
