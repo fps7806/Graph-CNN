@@ -101,7 +101,7 @@ def make_graph_embed_pooling(V, A, no_vertices=1, mask=None, name=None):
         result_A = tf.matmul(factors, result_A, transpose_a=True)
         result_A = tf.reshape(result_A, (tf.shape(A)[0], no_vertices, A.get_shape()[2].value, no_vertices))
         
-        return result, result_A
+        return result, result_A, factors
     
 def make_embedding_layer(V, no_filters, name=None):
     with tf.variable_scope(name, default_name='Embed') as scope:

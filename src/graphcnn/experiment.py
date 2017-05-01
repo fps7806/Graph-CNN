@@ -9,7 +9,7 @@ import time
 from tensorflow.python.training import queue_runner
 
 # This function is used to create tf.cond compatible tf.train.batch alternative
-def _make_batch_queue(input, capacity, num_threads=1):
+def make_batch_queue(input, capacity, num_threads=1):
     queue = tf.PaddingFIFOQueue(capacity=capacity, dtypes=[s.dtype for s in input], shapes=[s.get_shape() for s in input])
     tf.summary.scalar("fraction_of_%d_full" % capacity,
            tf.cast(queue.size(), tf.float32) *
@@ -27,12 +27,14 @@ class GraphCNNExperiment(object):
         self.model_name = model_name
         self.num_iterations = 200
         self.iterations_per_test = 5
+        self.summary_interval = 100
         self.display_iter = 5
         self.snapshot_iter = 1000000
         self.train_batch_size = 0
         self.test_batch_size = 0
         self.crop_if_possible = True
-        self.debug = False
+        self.should_checkpoint = True
+        self.should_summary = True
         self.starter_learning_rate = 0.1
         self.learning_rate_exp = 0.1
         self.learning_rate_step = 1000
@@ -54,6 +56,7 @@ class GraphCNNExperiment(object):
     # SHOULD ONLY BE USED IF test_batch_size == ALL TEST SAMPLES
     def get_max_accuracy(self):
         tf.reset_default_graph()
+        self.net.global_step = tf.Variable(0,name='global_step',trainable=False)
         with tf.variable_scope('loss') as scope:
             max_acc_test = tf.Variable(tf.zeros([]), name="max_acc_test")
         saver = tf.train.Saver()
@@ -70,7 +73,6 @@ class GraphCNNExperiment(object):
         self.print_ext('Running CV for:', desc)
         start_time = time.time()
         for i in range(no_folds):
-            tf.reset_default_graph()
             self.set_kfold(no_folds=no_folds, fold_id=i)
             cur_max, max_it = self.run()
             self.print_ext('Fold %d max accuracy: %g at %d' % (i, cur_max, max_it))
@@ -176,7 +178,7 @@ class GraphCNNExperiment(object):
                         single_sample = self.crop_single_sample(single_sample)
                     
                     # creates training batch queue
-                    train_queue = _make_batch_queue(single_sample, capacity=self.train_batch_size*2, num_threads=6)
+                    train_queue = make_batch_queue(single_sample, capacity=self.train_batch_size*2, num_threads=6)
 
                 # Create the test queue
                 with tf.variable_scope('test_data') as scope:
@@ -196,7 +198,7 @@ class GraphCNNExperiment(object):
                         if self.crop_if_possible:
                             single_sample = self.crop_single_sample(single_sample)
                             
-                        test_queue = _make_batch_queue(single_sample, capacity=self.test_batch_size*2, num_threads=1)
+                        test_queue = make_batch_queue(single_sample, capacity=self.test_batch_size*2, num_threads=1)
                         
                     # If using full-batch no need for queues
                     else:
@@ -212,25 +214,26 @@ class GraphCNNExperiment(object):
     # Should add the loss to the 'losses' collection and add any summaries needed (e.g. accuracy) 
     def create_loss_function(self):
         with tf.variable_scope('loss') as scope:
+            labels = tf.cast(self.net.labels, tf.int64)
             self.print_ext('Creating loss function and summaries')
-            cross_entropy = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.net.current_V, labels=self.net.labels))
+            cross_entropy = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.net.current_V, labels=labels))
 
-            correct_prediction = tf.cast(tf.equal(tf.argmax(self.net.current_V, 1), self.net.labels), tf.float32)
-            accuracy = tf.reduce_mean(correct_prediction)
+            correct_prediction = tf.cast(tf.equal(tf.argmax(self.net.current_V, 1), labels), tf.float32)
+            self.net.accuracy = tf.reduce_mean(correct_prediction)
             
             # we have 2 variables that will keep track of the best accuracy obtained in training/testing batch
             # SHOULD ONLY BE USED IF test_batch_size == ALL TEST SAMPLES
             self.max_acc_train = tf.Variable(tf.zeros([]), name="max_acc_train")
             self.max_acc_test = tf.Variable(tf.zeros([]), name="max_acc_test")
-            max_acc = tf.cond(self.net.is_training, lambda: tf.assign(self.max_acc_train, tf.maximum(self.max_acc_train, accuracy)), lambda: tf.assign(self.max_acc_test, tf.maximum(self.max_acc_test, accuracy)))
+            max_acc = tf.cond(self.net.is_training, lambda: tf.assign(self.max_acc_train, tf.maximum(self.max_acc_train, self.net.accuracy)), lambda: tf.assign(self.max_acc_test, tf.maximum(self.max_acc_test, self.net.accuracy)))
             
             tf.add_to_collection('losses', cross_entropy)
-            tf.summary.scalar('accuracy', accuracy)
+            tf.summary.scalar('accuracy', self.net.accuracy)
             tf.summary.scalar('max_accuracy', max_acc)
             tf.summary.scalar('cross_entropy', cross_entropy)
             
             # if silent == false display these statistics:
-            self.reports['accuracy'] = accuracy
+            self.reports['accuracy'] = self.net.accuracy
             self.reports['max acc.'] = max_acc
             self.reports['cross_entropy'] = cross_entropy
         
@@ -247,16 +250,16 @@ class GraphCNNExperiment(object):
         if latest == None:
             return 0
         saver.restore(sess, latest)
-        i = int(latest[len(self.snapshot_path + 'model-'):])
-        self.print_ext("Model restored at %d." % i)
-        return i
+        int(latest[len(self.snapshot_path + 'model-'):])
+        self.print_ext("Model restored at %d." % self.net.global_step.eval())
+        return self.net.global_step.eval()
         
-    def save_model(self, sess, saver, i):
+    def save_model(self, sess, saver):
         latest = tf.train.latest_checkpoint(self.snapshot_path)
-        if latest == None or i != int(latest[len(self.snapshot_path + 'model-'):]):
-            self.print_ext('Saving model at %d' % i)
+        if latest == None or self.net.global_step.eval() > int(latest[len(self.snapshot_path + 'model-'):]):
+            self.print_ext('Saving model at %d' % self.net.global_step.eval())
             verify_dir_exists(self.snapshot_path)
-            result = saver.save(sess, self.snapshot_path + 'model', global_step=i)
+            result = saver.save(sess, self.snapshot_path + 'model', global_step=self.net.global_step.eval())
             self.print_ext('Model saved to %s' % result)
       
     # Create graph (input, network, loss)
@@ -275,10 +278,11 @@ class GraphCNNExperiment(object):
             self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name)
             self.test_summary_path = './summary/%s/test/%s' %(self.dataset_name, self.model_name)
             self.train_summary_path = './summary/%s/train/%s' %(self.dataset_name, self.model_name)
-        if self.debug:
+        if self.should_checkpoint == False:
             i = 0
         else:
             i = self.check_model_iteration()
+        tf.reset_default_graph()
         if i < self.num_iterations:
             self.print_ext('Creating training network')
             
@@ -312,10 +316,11 @@ class GraphCNNExperiment(object):
                 sess.run(tf.global_variables_initializer())
                 sess.run(tf.local_variables_initializer(), self.variable_initialization)
                 
-                if self.debug == False:
+                if self.should_checkpoint:
                     saver = tf.train.Saver()
                     self.load_model(sess, saver)
-                                
+                    
+                if self.should_summary:
                     self.print_ext('Starting summaries')
                     test_writer = tf.summary.FileWriter(self.test_summary_path, sess.graph)
                     train_writer = tf.summary.FileWriter(self.train_summary_path, sess.graph)
@@ -330,49 +335,45 @@ class GraphCNNExperiment(object):
                 try:
                     total_training = 0.0
                     total_testing = 0.0
+                    total_summary = 0.0
                     start_at = time.time()
-                    last_summary = time.time()
-                    while i < self.num_iterations:
-                        if i % self.snapshot_iter == 0 and self.debug == False:
-                            self.save_model(sess, saver, i)
-                        if i % self.iterations_per_test == 0:
-                            start_temp = time.time()
-                            summary, reports = sess.run([summary_merged, self.reports], feed_dict={self.net.is_training:0})
-                            total_testing += time.time() - start_temp
-                            self.print_ext('Test Step %d Finished' % i)
-                            for key, value in reports.items():
-                                self.print_ext('Test Step %d "%s" = ' % (i, key), value)
-                            if self.debug == False:
-                                test_writer.add_summary(summary, i)
+                    while self.net.global_step.eval() <= self.num_iterations:
+                        if self.net.global_step.eval() % self.snapshot_iter == 0 and self.should_checkpoint:
+                            self.save_model(sess, saver)
                             
-                        start_temp = time.time()
-                        summary, _, reports = sess.run([summary_merged, train_step, self.reports], feed_dict={self.net.is_training:1})
-                        total_training += time.time() - start_temp
-                        i += 1
-                        if ((i-1) % self.display_iter) == 0:
-                            if self.debug == False:
-                                train_writer.add_summary(summary, i-1)
-                            total = time.time() - start_at
-                            self.print_ext('Training Step %d Finished Timing (Training: %g, Test: %g) after %g seconds' % (i-1, total_training/total, total_testing/total, time.time()-last_summary)) 
+                        if self.should_summary and (self.net.global_step.eval() % self.summary_interval) == 0:
+                            start_temp = time.time()
+                            summary = sess.run(summary_merged, feed_dict={self.net.is_training:1})
+                            train_writer.add_summary(summary, self.net.global_step.eval())
+                            
+                            summary = sess.run(summary_merged, feed_dict={self.net.is_training:0})
+                            test_writer.add_summary(summary, self.net.global_step.eval())
+                            
+                            total_summary += time.time() - start_temp
+                        
+                        if self.net.global_step.eval() % self.iterations_per_test == 0:
+                            start_temp = time.time()
+                            reports = sess.run(self.reports, feed_dict={self.net.is_training:0})
+                            total_testing += time.time() - start_temp
+                            self.print_ext('Test Step %d Finished' % self.net.global_step.eval())
                             for key, value in reports.items():
-                                self.print_ext('Training Step %d "%s" = ' % (i-1, key), value)
-                            last_summary = time.time()            
-                        if (i-1) % 100 == 0:
-                            total_training = 0.0
-                            total_testing = 0.0
-                            start_at = time.time()
-                    if i % self.iterations_per_test == 0:
-                        summary = sess.run(summary_merged, feed_dict={self.net.is_training:0})
-                        if self.debug == False:
-                            test_writer.add_summary(summary, i)
-                        self.print_ext('Test Step %d Finished' % i)
+                                self.print_ext('Test Step %d "%s" = ' % (self.net.global_step.eval(), key), value)
+                                
+                        start_temp = time.time()
+                        reports, _ = sess.run([self.reports, train_step], feed_dict={self.net.is_training:1})
+                        total_training += time.time() - start_temp
+                        if self.net.global_step.eval() % self.display_iter == 0:
+                            self.print_ext('Training Step %d Finished Timing (Train: %g, Test: %g, Summary: %g) after %g seconds' % (self.net.global_step.eval(), total_training, total_testing, total_summary, time.time()-start_at)) 
+                            for key, value in reports.items():
+                                self.print_ext('Training Step %d "%s" = ' % (self.net.global_step.eval(), key), value)
+
                 except KeyboardInterrupt as err:
                     self.print_ext('Training interrupted at %d' % i)
                     wasKeyboardInterrupt = True
                     raisedEx = err
                 finally:
-                    if i > 0 and self.debug == False:
-                        self.save_model(sess, saver, i)
+                    if self.should_checkpoint:
+                        self.save_model(sess, saver)
                     self.print_ext('Training completed, starting cleanup!')
                     coord.request_stop()
                     coord.join(threads)
@@ -444,12 +445,14 @@ class SingleGraphCNNExperiment(GraphCNNExperiment):
         self.print_ext('Creating loss function and summaries')
         
         with tf.variable_scope('loss') as scope:
+            labels = tf.cast(self.net.labels, tf.int64)
+        
             inv_sum = (1./tf.reduce_sum(self.net.current_mask))
-            cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.net.current_V, labels=self.net.labels)
+            cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.net.current_V, labels=labels)
             cross_entropy = tf.multiply(tf.squeeze(self.net.current_mask), tf.squeeze(cross_entropy))
             cross_entropy = tf.reduce_sum(cross_entropy)*inv_sum
 
-            correct_prediction = tf.cast(tf.equal(tf.argmax(self.net.current_V, 2), self.net.labels), tf.float32)
+            correct_prediction = tf.cast(tf.equal(tf.argmax(self.net.current_V, 2), labels), tf.float32)
             correct_prediction = tf.multiply(tf.squeeze(self.net.current_mask), tf.squeeze(correct_prediction))
             accuracy = tf.reduce_sum(correct_prediction)*inv_sum
             

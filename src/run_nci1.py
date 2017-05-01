@@ -1,5 +1,6 @@
 import graphcnn.setup.chemical as sc
 from graphcnn.experiment import *
+from graphcnn.visualization import *
 
 dataset = sc.load_protein_dataset('NCI1')
 
@@ -10,11 +11,14 @@ class NCI1Experiment(object):
         net.create_network(input)
         net.make_graphcnn_layer(64)
         net.make_graphcnn_layer(64)
+        net.make_visual_layer('InputGraph')
         net.make_graph_embed_pooling(no_vertices=32)
+        net.make_visual_layer('Pooling1')
             
         net.make_graphcnn_layer(32)
         
         net.make_graph_embed_pooling(no_vertices=8)
+        net.make_visual_layer('Pooling2')
             
         net.make_fc_layer(256)
         net.make_fc_layer(2, name='final', with_bn=False, with_act_func = False)
@@ -24,7 +28,6 @@ exp = GraphCNNExperiment('NCI1', 'nci1', NCI1Experiment())
 exp.num_iterations = 1500
 exp.train_batch_size = 128
 exp.optimizer = 'adam'
-exp.debug = True
 
 exp.preprocess_data(dataset)
 acc, std = exp.run_kfold_experiments(no_folds=10)

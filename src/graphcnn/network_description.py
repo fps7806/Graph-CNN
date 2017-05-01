@@ -32,6 +32,8 @@ class GraphCNNNetworkDescription(object):
         
     def make_batchnorm_layer(self):
         pass
+    def make_visual_layer(self, name):
+        pass
         
     # Equivalent to 0-hop filter
     def make_embedding_layer(self, no_filters, name=None, with_bn=True, with_act_func=True):

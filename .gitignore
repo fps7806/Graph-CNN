@@ -4,3 +4,4 @@ __pycache__/
 snapshots/
 datasets/
 results/
+*.png

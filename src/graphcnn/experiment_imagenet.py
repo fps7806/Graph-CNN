@@ -6,18 +6,8 @@ import numpy as np
 import tensorflow as tf
 import glob
 import time
-from graphcnn.experiment import GraphCNNExperiment
+from graphcnn.experiment import GraphCNNExperiment, make_batch_queue
 from tensorflow.python.training import queue_runner
-
-# This function is used to create tf.cond compatible tf.train.batch alternative
-def _make_batch_queue(input, capacity, num_threads=1):
-    queue = tf.PaddingFIFOQueue(capacity=capacity, dtypes=[s.dtype for s in input], shapes=[s.get_shape() for s in input])
-    tf.summary.scalar("fraction_of_%d_full" % capacity,
-           tf.cast(queue.size(), tf.float32) *
-           (1. / capacity))
-    enqueue_ops = [queue.enqueue(input)]*num_threads
-    queue_runner.add_queue_runner(queue_runner.QueueRunner(queue, enqueue_ops))
-    return queue
 
 # This class is responsible for setting up and running experiments
 # Also provides helper functions related to experiments (e.g. get accuracy)
@@ -57,7 +47,7 @@ class GraphCNNImageNetExperiment(GraphCNNExperiment):
                     single_sample[0] = tf.random_crop(tf.image.resize_images(single_sample[0], [self.image_resize_width, self.image_resize_height]), [self.image_width, self.image_height, 3])
                     single_sample[0] = tf.image.random_flip_left_right(single_sample[0])
                     single_sample[0] = tf.cast(single_sample[0], dtype=tf.float32)/255
-                    train_queue = _make_batch_queue(single_sample, capacity=self.train_batch_size*2, num_threads=8)
+                    train_queue = make_batch_queue(single_sample, capacity=self.train_batch_size*2, num_threads=8)
 
                 # Create the test queue
                 with tf.variable_scope('test_data') as scope:
@@ -80,7 +70,7 @@ class GraphCNNImageNetExperiment(GraphCNNExperiment):
                     single_sample[0] = tf.image.resize_image_with_crop_or_pad(tf.image.resize_images(single_sample[0], [self.image_resize_width, self.image_resize_height]), self.image_width, self.image_height)
                     single_sample[0].set_shape([self.image_width, self.image_height, 3])
                     single_sample[0] = tf.cast(single_sample[0], dtype=tf.float32)/255
-                    test_queue = _make_batch_queue(single_sample, capacity=self.test_batch_size*2, num_threads=1)
+                    test_queue = make_batch_queue(single_sample, capacity=self.test_batch_size*2, num_threads=1)
                         
                 result = tf.cond(self.net.is_training, lambda: train_queue.dequeue_many(self.train_batch_size), lambda: test_queue.dequeue_many(self.test_batch_size))
 
