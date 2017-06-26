@@ -2,7 +2,10 @@
 Implementation of "Robust Spatial Filtering with Graph Convolutional Neural Networks" - https://arxiv.org/abs/1703.00792.
 This project is still under development. Email Felipe at fps7806@rit.edu if you have any suggestions or problems.
 ## Requirements:
-* Tensorflow >1.0
+* pip install scipy
+* pip install tensorflow
+* pip install networkx
+* pip install matplotlib
 * Internet Connection (if automatically downloading datasets)
 
 ## Instructions

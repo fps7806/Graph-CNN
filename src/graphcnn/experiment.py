@@ -1,3 +1,4 @@
+from .flags import *
 from graphcnn.helper import *
 from graphcnn.network import *
 from graphcnn.layers import *
@@ -22,25 +23,12 @@ def make_batch_queue(input, capacity, num_threads=1):
 # Also provides helper functions related to experiments (e.g. get accuracy)
 class GraphCNNExperiment(object):
     def __init__(self, dataset_name, model_name, net_constructor):
+        FLAGS.dataset_name = dataset_name
         # Initialize all defaults
         self.dataset_name = dataset_name
         self.model_name = model_name
-        self.num_iterations = 200
-        self.iterations_per_test = 5
-        self.summary_interval = 100
-        self.display_iter = 5
-        self.snapshot_iter = 1000000
-        self.train_batch_size = 0
-        self.test_batch_size = 0
         self.crop_if_possible = True
-        self.should_checkpoint = True
-        self.should_summary = True
-        self.starter_learning_rate = 0.1
-        self.learning_rate_exp = 0.1
-        self.learning_rate_step = 1000
         self.reports = {}
-        self.silent = False
-        self.optimizer = 'momentum'
         
         self.net_constructor = net_constructor
         self.net = GraphCNNNetwork()
@@ -49,7 +37,7 @@ class GraphCNNExperiment(object):
         
     # print_ext can be disabled through the silent flag
     def print_ext(self, *args):
-        if self.silent == False:
+        if FLAGS.silent == False:
             print_ext(*args)
             
     # Will retrieve the value stored as the maximum test accuracy on a trained network
@@ -65,7 +53,8 @@ class GraphCNNExperiment(object):
             return sess.run(max_acc_test), max_it
         
     # Run all folds in a CV and calculate mean/std
-    def run_kfold_experiments(self, no_folds=10):
+    def run_kfold_experiments(self):
+        no_folds = FLAGS.NO_FOLDS
         acc = []
         
         self.net_constructor.create_network(self.net_desc, [])
@@ -82,8 +71,9 @@ class GraphCNNExperiment(object):
         std_acc = np.std(acc)*100
         self.print_ext('Result is: %.2f (+- %.2f)' % (mean_acc, std_acc))
         
-        verify_dir_exists('./results/')
-        with open('./results/%s.txt' % self.dataset_name, 'a+') as file:
+        result_file_name = get_regex_flag('RESULTS_FILE')
+        verify_dir_exists(result_file_name)
+        with open(result_file_name, 'a+') as file:
             file.write('%s\t%s\t%d-fold\t%d seconds\t%.2f (+- %.2f)\n' % (str(datetime.now()), desc, no_folds, time.time()-start_time, mean_acc, std_acc))
         return mean_acc, std_acc
         
@@ -126,6 +116,8 @@ class GraphCNNExperiment(object):
         self.no_samples_test = self.test_idx.shape[0]
         self.print_ext('Data ready. no_samples_train:', self.no_samples_train, 'no_samples_test:', self.no_samples_test)
         
+        self.train_batch_size = FLAGS.train_batch_size
+        self.test_batch_size = FLAGS.test_batch_size
         if self.train_batch_size == 0:
             self.train_batch_size = self.no_samples_train
         if self.test_batch_size == 0:
@@ -278,12 +270,12 @@ class GraphCNNExperiment(object):
             self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name)
             self.test_summary_path = './summary/%s/test/%s' %(self.dataset_name, self.model_name)
             self.train_summary_path = './summary/%s/train/%s' %(self.dataset_name, self.model_name)
-        if self.should_checkpoint == False:
+        if FLAGS.save_checkpoints == False:
             i = 0
         else:
             i = self.check_model_iteration()
         tf.reset_default_graph()
-        if i < self.num_iterations:
+        if i < FLAGS.num_iterations:
             self.print_ext('Creating training network')
             
             self.net.is_training = tf.placeholder(tf.bool, shape=())
@@ -304,10 +296,10 @@ class GraphCNNExperiment(object):
             
             
             with tf.control_dependencies(update_ops):
-                if self.optimizer == 'adam':
+                if FLAGS.optimizer == 'adam':
                     train_step = tf.train.AdamOptimizer().minimize(loss, global_step=self.net.global_step)
                 else:
-                    self.learning_rate = tf.train.exponential_decay(self.starter_learning_rate, self.net.global_step, self.learning_rate_step, self.learning_rate_exp, staircase=True)
+                    self.learning_rate = tf.train.exponential_decay(FLAGS.starter_learning_rate, self.net.global_step, FLAGS.learning_rate_step, FLAGS.learning_rate_exp, staircase=True)
                     train_step = tf.train.MomentumOptimizer(self.learning_rate, 0.9).minimize(loss, global_step=self.net.global_step)
                     self.reports['lr'] = self.learning_rate
                     tf.summary.scalar('learning_rate', self.learning_rate)
@@ -316,11 +308,11 @@ class GraphCNNExperiment(object):
                 sess.run(tf.global_variables_initializer())
                 sess.run(tf.local_variables_initializer(), self.variable_initialization)
                 
-                if self.should_checkpoint:
+                if FLAGS.save_checkpoints:
                     saver = tf.train.Saver()
                     self.load_model(sess, saver)
-                    
-                if self.should_summary:
+                                
+                if FLAGS.summary_save:
                     self.print_ext('Starting summaries')
                     test_writer = tf.summary.FileWriter(self.test_summary_path, sess.graph)
                     train_writer = tf.summary.FileWriter(self.train_summary_path, sess.graph)
@@ -337,11 +329,11 @@ class GraphCNNExperiment(object):
                     total_testing = 0.0
                     total_summary = 0.0
                     start_at = time.time()
-                    while self.net.global_step.eval() <= self.num_iterations:
-                        if self.net.global_step.eval() % self.snapshot_iter == 0 and self.should_checkpoint:
+                    while self.net.global_step.eval() <= FLAGS.num_iterations:
+                        if self.net.global_step.eval() % FLAGS.snapshot_iter == 0 and FLAGS.save_checkpoints:
                             self.save_model(sess, saver)
                             
-                        if self.should_summary and (self.net.global_step.eval() % self.summary_interval) == 0:
+                        if FLAGS.summary_save and (self.net.global_step.eval() % FLAGS.summary_period) == 0:
                             start_temp = time.time()
                             summary = sess.run(summary_merged, feed_dict={self.net.is_training:1})
                             train_writer.add_summary(summary, self.net.global_step.eval())
@@ -351,7 +343,7 @@ class GraphCNNExperiment(object):
                             
                             total_summary += time.time() - start_temp
                         
-                        if self.net.global_step.eval() % self.iterations_per_test == 0:
+                        if self.net.global_step.eval() % FLAGS.iterations_per_test == 0:
                             start_temp = time.time()
                             reports = sess.run(self.reports, feed_dict={self.net.is_training:0})
                             total_testing += time.time() - start_temp
@@ -362,7 +354,7 @@ class GraphCNNExperiment(object):
                         start_temp = time.time()
                         reports, _ = sess.run([self.reports, train_step], feed_dict={self.net.is_training:1})
                         total_training += time.time() - start_temp
-                        if self.net.global_step.eval() % self.display_iter == 0:
+                        if self.net.global_step.eval() % FLAGS.display_iter == 0:
                             self.print_ext('Training Step %d Finished Timing (Train: %g, Test: %g, Summary: %g) after %g seconds' % (self.net.global_step.eval(), total_training, total_testing, total_summary, time.time()-start_at)) 
                             for key, value in reports.items():
                                 self.print_ext('Training Step %d "%s" = ' % (self.net.global_step.eval(), key), value)
@@ -372,7 +364,7 @@ class GraphCNNExperiment(object):
                     wasKeyboardInterrupt = True
                     raisedEx = err
                 finally:
-                    if self.should_checkpoint:
+                    if FLAGS.save_checkpoints:
                         self.save_model(sess, saver)
                     self.print_ext('Training completed, starting cleanup!')
                     coord.request_stop()

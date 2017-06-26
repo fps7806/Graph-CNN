@@ -6,11 +6,6 @@ import numpy as np
 class GraphCNNKeys(object):
     TRAIN_SUMMARIES = "train_summaries"
     TEST_SUMMARIES = "test_summaries"
-    
-class GraphCNNGlobal(object):
-    BN_DECAY = 0.999
-    GRAPHCNN_INIT_FACTOR = 1.
-    GRAPHCNN_I_FACTOR = 1.0
 
 def print_ext(*args):
     print(str(datetime.now()), *args)
@@ -24,14 +19,13 @@ def get_node_mask(graph_size, max_size=None):
         max_size = np.max(graph_size)
     return np.array([np.pad(np.ones([s, 1]), ((0, max_size-s), (0, 0)), 'constant', constant_values=(0)) for s in graph_size], dtype=np.float32)
     
-def _tf_print(*args):
-    for i in range(len(args)):
-        print(args[i].shape)
-        print(args[i])
-    return args
-    
 def make_print(*args):
     import tensorflow as tf
+    def _tf_print(*args):
+        for i in range(len(args)):
+            print(args[i].shape)
+            print(args[i])
+        return args
     
     result = tf.py_func(_tf_print, args, [ s.dtype for s in args])
     for i in range(len(args)):

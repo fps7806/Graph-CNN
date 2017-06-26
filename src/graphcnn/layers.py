@@ -1,4 +1,5 @@
-from graphcnn.helper import *
+from .flags import FLAGS
+from .helper import *
 import tensorflow as tf
 import numpy as np
 import math
@@ -24,7 +25,7 @@ def make_variable_with_weight_decay(name, shape, stddev=0.01, wd=0.0005):
     return var
     
 def make_bn(input, phase, axis=-1, epsilon=0.001, mask=None, num_updates=None, name=None):
-    default_decay = GraphCNNGlobal.BN_DECAY
+    default_decay = FLAGS.BN_DECAY
     with tf.variable_scope(name, default_name='BatchNorm') as scope:
         input_size = input.get_shape()[axis].value
         if axis == -1:
@@ -70,8 +71,8 @@ def make_graphcnn_layer(V, A, no_filters, name=None):
     with tf.variable_scope(name, default_name='Graph-CNN') as scope:
         no_A = A.get_shape()[2].value
         no_features = V.get_shape()[2].value
-        W = make_variable_with_weight_decay('weights', [no_features*no_A, no_filters], stddev=math.sqrt(1.0/(no_features*(no_A+1)*GraphCNNGlobal.GRAPHCNN_INIT_FACTOR)))
-        W_I = make_variable_with_weight_decay('weights_I', [no_features, no_filters], stddev=math.sqrt(GraphCNNGlobal.GRAPHCNN_I_FACTOR/(no_features*(no_A+1)*GraphCNNGlobal.GRAPHCNN_INIT_FACTOR)))
+        W = make_variable_with_weight_decay('weights', [no_features*no_A, no_filters], stddev=math.sqrt(1.0/(no_features*(no_A+1)*FLAGS.INIT_FACTOR)))
+        W_I = make_variable_with_weight_decay('weights_I', [no_features, no_filters], stddev=math.sqrt(1.0/(no_features*(no_A+1)*FLAGS.INIT_FACTOR)))
         b = make_bias_variable('bias', [no_filters])
 
         A_shape = tf.shape(A)
