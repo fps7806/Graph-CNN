@@ -1,13 +1,12 @@
-from graphcnn.helper import *
-import scipy.io
-import numpy as np
-import datetime
-import graphcnn
-from .helper import *
-
 chemical_datasets_list = ['DD', 'ENZYMES', 'MUTAG', 'NCI1', 'NCI109']
 
 def load_protein_dataset(dataset_name):
+    import scipy.io
+    import numpy as np
+    import datetime
+    import graphcnn
+    from .helper import locate_or_download_file, locate_or_extract_file, get_file_location
+    
     if dataset_name not in chemical_datasets_list:
         print_ext('Dataset doesn\'t exist. Options:', chemical_datasets_list)
         return

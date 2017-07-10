@@ -1,12 +1,12 @@
-from graphcnn.helper import *
-import scipy.io
-import numpy as np
-import datetime
-from .helper import *
-import graphcnn
 
 
 def load_cora_dataset():
+    import scipy.io
+    import numpy as np
+    import datetime
+    from .helper import locate_or_download_file, locate_or_extract_file, get_file_location
+    import graphcnn
+    
     locate_or_download_file('cora.tgz', 'http://www.cs.umd.edu/~sen/lbc-proj/data/cora.tgz')
     locate_or_extract_file('cora.tgz', 'cora')
     

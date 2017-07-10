@@ -5,8 +5,6 @@ tf.app.flags.DEFINE_integer('num_iterations', 1500, "Number of samples to proces
 import graphcnn
 from graphcnn import FLAGS
 
-dataset = graphcnn.setup.load_cora_dataset()
-
 def main(argv=None):
     class CoraExperiment():
         def create_network(self, net, input):
@@ -27,10 +25,10 @@ def main(argv=None):
             net.make_graphcnn_layer(7, name='final', with_bn=False, with_act_func = False)
             
     exp = graphcnn.SingleGraphCNNExperiment('Cora', 'cora', CoraExperiment())
-    exp.input = dataset
+    exp.input = graphcnn.setup.load_cora_dataset()
             
     acc, std = exp.run_kfold_experiments()
-    print_ext('%d-fold: %.2f (+- %.2f)' % (FLAGS.NO_FOLDS, acc, std))
+    graphcnn.print_ext('%d-fold: %.2f (+- %.2f)' % (FLAGS.NO_FOLDS, acc, std))
 
 if __name__ == '__main__':
     tf.app.run()

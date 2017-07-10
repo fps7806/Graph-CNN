@@ -51,7 +51,7 @@ class GraphCNNExperiment(object):
         start_time = time.time()
         for i in range(no_folds):
             self.input.set_kfold(no_folds=no_folds, fold_id=i)
-            cur_max, max_it = self.run()
+            cur_max, max_it = self.train()
             self.print_ext('Fold %d max accuracy: %g at %d' % (i, cur_max, max_it))
             acc.append(cur_max)
         acc = np.array(acc)
@@ -129,7 +129,7 @@ class GraphCNNExperiment(object):
     # Handle checkpoints
     # Report summaries if silent == false
     # start/end threads
-    def run(self):
+    def train(self):
         self.variable_initialization = {}
         
         self.print_ext('Training model "%s"!' % self.model_name)
@@ -248,3 +248,59 @@ class GraphCNNExperiment(object):
         else:
             self.print_ext('Model "%s" already trained!' % self.model_name)
             return self.get_max_accuracy()
+
+    # Create graph (input, network, loss)
+    # start/end threads
+    def evaluate(self):
+        tf.reset_default_graph()
+        self.variable_initialization = {}
+        
+        self.print_ext('Evaluating model "%s"!' % self.model_name)
+        if hasattr(self, 'fold_id') and self.fold_id:
+            self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name + '_fold%d' % self.fold_id)
+        else:
+            self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name)
+        
+        self.net.is_training = tf.placeholder(tf.bool, shape=())
+        self.net.global_step = tf.Variable(0,name='global_step',trainable=False)
+        
+        input = self.input.create_evaluation_data(self)
+        tf_no_samples = tf.shape(input[0])[0]
+        self.net_constructor.create_network(self.net, input)
+        self.create_loss_function()
+        
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            sess.run(tf.local_variables_initializer(), self.variable_initialization)
+            
+            saver = tf.train.Saver()
+            self.load_model(sess, saver)
+        
+            self.print_ext('Starting threads')
+            coord = tf.train.Coordinator()
+            threads = tf.train.start_queue_runners(sess=sess, coord=coord)
+            self.print_ext('Starting evaluation. test_batch_size:', self.input.test_batch_size)
+            wasKeyboardInterrupt = False
+            accuracy = 0
+            total = 0
+            try:
+                acc_total = 0
+                while total < self.input.no_samples_test and not coord.should_stop():
+                    no_samples, acc = sess.run([tf_no_samples, self.net.accuracy], feed_dict={self.net.is_training:0})
+                    total += no_samples
+                    acc_total += acc*no_samples
+                self.print_ext('Epoch completed!')
+                accuracy = acc_total/total
+            except KeyboardInterrupt as err:
+                self.print_ext('Evaluation interrupted at %d samples' % total)
+                wasKeyboardInterrupt = True
+                raisedEx = err
+            finally:
+                self.print_ext('Evaluation completed, starting cleanup!')
+                coord.request_stop()
+                coord.join(threads)
+                self.print_ext('Cleanup completed!')
+                if wasKeyboardInterrupt:
+                    raise raisedEx
+            
+            return accuracy, total
