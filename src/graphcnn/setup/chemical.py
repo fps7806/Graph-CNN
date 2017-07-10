@@ -2,6 +2,7 @@ from graphcnn.helper import *
 import scipy.io
 import numpy as np
 import datetime
+import graphcnn
 import graphcnn.setup.helper
 import graphcnn.setup as setup
 
@@ -47,4 +48,7 @@ def load_protein_dataset(dataset_name):
             for k in range(input[0, i]['al'][j, 0].shape[1]):
                 A[j, input[0, i]['el']['values'][0, 0][j, 0][0, k]-1, input[0, i]['al'][j, 0][0, k]-1] = 1
         samples_A.append(A)
-    return np.array(samples_V), np.array(samples_A), np.reshape(labels, [-1])
+
+    dataset = graphcnn.InputPipeline(vertices = np.array(samples_V), adjacency=np.array(samples_A), labels=np.reshape(labels, [-1]))
+
+    return dataset

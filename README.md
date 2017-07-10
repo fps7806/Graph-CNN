@@ -5,6 +5,7 @@ This project is still under development. Email Felipe at fps7806@rit.edu if you 
 * pip install scipy
 * pip install tensorflow
 * pip install networkx
+* pip install pydotplus + GraphViz - For prettier pics
 * pip install matplotlib
 * Internet Connection (if automatically downloading datasets)
 

@@ -2,22 +2,10 @@ from .flags import *
 from graphcnn.helper import *
 from graphcnn.network import *
 from graphcnn.layers import *
-from sklearn.model_selection import KFold
 import numpy as np
 import tensorflow as tf
 import glob
 import time
-from tensorflow.python.training import queue_runner
-
-# This function is used to create tf.cond compatible tf.train.batch alternative
-def make_batch_queue(input, capacity, num_threads=1):
-    queue = tf.PaddingFIFOQueue(capacity=capacity, dtypes=[s.dtype for s in input], shapes=[s.get_shape() for s in input])
-    tf.summary.scalar("fraction_of_%d_full" % capacity,
-           tf.cast(queue.size(), tf.float32) *
-           (1. / capacity))
-    enqueue_ops = [queue.enqueue(input)]*num_threads
-    queue_runner.add_queue_runner(queue_runner.QueueRunner(queue, enqueue_ops))
-    return queue
 
 # This class is responsible for setting up and running experiments
 # Also provides helper functions related to experiments (e.g. get accuracy)
@@ -62,7 +50,7 @@ class GraphCNNExperiment(object):
         self.print_ext('Running CV for:', desc)
         start_time = time.time()
         for i in range(no_folds):
-            self.set_kfold(no_folds=no_folds, fold_id=i)
+            self.input.set_kfold(no_folds=no_folds, fold_id=i)
             cur_max, max_it = self.run()
             self.print_ext('Fold %d max accuracy: %g at %d' % (i, cur_max, max_it))
             acc.append(cur_max)
@@ -77,65 +65,6 @@ class GraphCNNExperiment(object):
             file.write('%s\t%s\t%d-fold\t%d seconds\t%.2f (+- %.2f)\n' % (str(datetime.now()), desc, no_folds, time.time()-start_time, mean_acc, std_acc))
         return mean_acc, std_acc
         
-    # Prepares samples for experiment, accepts a list (vertices, adjacency, labels) where:
-    # vertices = list of NxC matrices where C is the same over all samples, N can be different between samples
-    # adjacency = list of NxLxN tensors containing L NxN adjacency matrices of the given samples
-    # labels = list of sample labels
-    # len(vertices) == len(adjacency) == len(labels)
-    def preprocess_data(self, dataset):
-        self.graph_size = np.array([s.shape[0] for s in dataset[0]]).astype(np.int64)
-        
-        self.largest_graph = max(self.graph_size)
-        self.print_ext('Padding samples')
-        self.graph_vertices = []
-        self.graph_adjacency = []
-        for i in range(len(dataset[0])):
-            # pad all vertices to match size
-            self.graph_vertices.append(np.pad(dataset[0][i].astype(np.float32), ((0, self.largest_graph-dataset[0][i].shape[0]), (0, 0)), 'constant', constant_values=(0)))
-
-            # pad all adjacency matrices to match size
-            self.graph_adjacency.append(np.pad(dataset[1][i].astype(np.float32), ((0, self.largest_graph-dataset[1][i].shape[0]), (0, 0), (0, self.largest_graph-dataset[1][i].shape[0])), 'constant', constant_values=(0)))
-            
-        self.print_ext('Stacking samples')
-        self.graph_vertices = np.stack(self.graph_vertices, axis=0)
-        self.graph_adjacency = np.stack(self.graph_adjacency, axis=0)
-        self.graph_labels = dataset[2].astype(np.int64)
-        
-        self.no_samples = self.graph_labels.shape[0]
-        
-        single_sample = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
-        
-    # Create CV information
-    def set_kfold(self, no_folds = 10, fold_id = 0):
-        inst = KFold(n_splits = no_folds, shuffle=True, random_state=125)
-        self.fold_id = fold_id
-        
-        self.KFolds = list(inst.split(np.arange(self.no_samples)))
-        self.train_idx, self.test_idx = self.KFolds[fold_id]
-        self.no_samples_train = self.train_idx.shape[0]
-        self.no_samples_test = self.test_idx.shape[0]
-        self.print_ext('Data ready. no_samples_train:', self.no_samples_train, 'no_samples_test:', self.no_samples_test)
-        
-        self.train_batch_size = FLAGS.train_batch_size
-        self.test_batch_size = FLAGS.test_batch_size
-        if self.train_batch_size == 0:
-            self.train_batch_size = self.no_samples_train
-        if self.test_batch_size == 0:
-            self.test_batch_size = self.no_samples_test
-        self.train_batch_size = min(self.train_batch_size, self.no_samples_train)
-        self.test_batch_size = min(self.test_batch_size, self.no_samples_test)
-        
-    # This function is cropped before batch
-    # Slice each sample to improve performance
-    def crop_single_sample(self, single_sample):
-        vertices = tf.slice(single_sample[0], np.array([0, 0], dtype=np.int64), tf.cast(tf.stack([single_sample[3], -1]), tf.int64))
-        vertices.set_shape([None, self.graph_vertices.shape[2]])
-        adjacency = tf.slice(single_sample[1], np.array([0, 0, 0], dtype=np.int64), tf.cast(tf.stack([single_sample[3], -1, single_sample[3]]), tf.int64))
-        adjacency.set_shape([None, self.graph_adjacency.shape[2], None])
-        
-        # V, A, labels, mask
-        return [vertices, adjacency, single_sample[2], tf.expand_dims(tf.ones(tf.slice(tf.shape(vertices), [0], [1])), axis=-1)]
-        
     def create_input_variable(self, input):
         for i in range(len(input)):
             placeholder = tf.placeholder(tf.as_dtype(input[i].dtype), shape=input[i].shape)
@@ -143,64 +72,6 @@ class GraphCNNExperiment(object):
             self.variable_initialization[placeholder] = input[i]
             input[i] = var
         return input
-    # Create input_producers and batch queues
-    def create_data(self):
-        with tf.device("/cpu:0"):
-            with tf.variable_scope('input') as scope:
-                # Create the training queue
-                with tf.variable_scope('train_data') as scope:
-                    self.print_ext('Creating training Tensorflow Tensors')
-                    
-                    # Create tensor with all training samples
-                    training_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
-                    training_samples = [s[self.train_idx, ...] for s in training_samples]
-                    
-                    if self.crop_if_possible == False:
-                        training_samples[3] = get_node_mask(training_samples[3], max_size=self.graph_vertices.shape[1])
-                        
-                    # Create tf.constants
-                    training_samples = self.create_input_variable(training_samples)
-                    
-                    # Slice first dimension to obtain samples
-                    single_sample = tf.train.slice_input_producer(training_samples, shuffle=True, capacity=self.train_batch_size)
-                    
-                    # Cropping samples improves performance but is not required
-                    if self.crop_if_possible:
-                        self.print_ext('Cropping smaller graphs')
-                        single_sample = self.crop_single_sample(single_sample)
-                    
-                    # creates training batch queue
-                    train_queue = make_batch_queue(single_sample, capacity=self.train_batch_size*2, num_threads=6)
-
-                # Create the test queue
-                with tf.variable_scope('test_data') as scope:
-                    self.print_ext('Creating test Tensorflow Tensors')
-                    
-                    # Create tensor with all test samples
-                    test_samples = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
-                    test_samples = [s[self.test_idx, ...] for s in test_samples]
-                    
-                    # If using mini-batch we will need a queue 
-                    if self.test_batch_size != self.no_samples_test:
-                        if self.crop_if_possible == False:
-                            test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
-                        test_samples = self.create_input_variable(test_samples)
-                        
-                        single_sample = tf.train.slice_input_producer(test_samples, shuffle=True, capacity=self.test_batch_size)
-                        if self.crop_if_possible:
-                            single_sample = self.crop_single_sample(single_sample)
-                            
-                        test_queue = make_batch_queue(single_sample, capacity=self.test_batch_size*2, num_threads=1)
-                        
-                    # If using full-batch no need for queues
-                    else:
-                        test_samples[3] = get_node_mask(test_samples[3], max_size=self.graph_vertices.shape[1])
-                        test_samples = self.create_input_variable(test_samples)
-                        
-                # obtain batch depending on is_training and if test is a queue
-                if self.test_batch_size == self.no_samples_test:
-                    return tf.cond(self.net.is_training, lambda: train_queue.dequeue_many(self.train_batch_size), lambda: test_samples)
-                return tf.cond(self.net.is_training, lambda: train_queue.dequeue_many(self.train_batch_size), lambda: test_queue.dequeue_many(self.test_batch_size))
      
     # Function called with the output of the Graph-CNN model
     # Should add the loss to the 'losses' collection and add any summaries needed (e.g. accuracy) 
@@ -262,10 +133,10 @@ class GraphCNNExperiment(object):
         self.variable_initialization = {}
         
         self.print_ext('Training model "%s"!' % self.model_name)
-        if hasattr(self, 'fold_id') and self.fold_id:
-            self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name + '_fold%d' % self.fold_id)
-            self.test_summary_path = './summary/%s/test/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
-            self.train_summary_path = './summary/%s/train/%s_fold%d' %(self.dataset_name, self.model_name, self.fold_id)
+        if hasattr(self.input, 'fold_id') and self.input.fold_id:
+            self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name + '_fold%d' % self.input.fold_id)
+            self.test_summary_path = './summary/%s/test/%s_fold%d' %(self.dataset_name, self.model_name, self.input.fold_id)
+            self.train_summary_path = './summary/%s/train/%s_fold%d' %(self.dataset_name, self.model_name, self.input.fold_id)
         else:
             self.snapshot_path = './snapshots/%s/%s/' % (self.dataset_name, self.model_name)
             self.test_summary_path = './summary/%s/test/%s' %(self.dataset_name, self.model_name)
@@ -282,7 +153,7 @@ class GraphCNNExperiment(object):
             self.net.global_step = tf.Variable(0,name='global_step',trainable=False)
             
             
-            input = self.create_data()
+            input = self.input.create_data(self)
             self.net_constructor.create_network(self.net, input)
             self.create_loss_function()
             
@@ -322,14 +193,14 @@ class GraphCNNExperiment(object):
                 self.print_ext('Starting threads')
                 coord = tf.train.Coordinator()
                 threads = tf.train.start_queue_runners(sess=sess, coord=coord)
-                self.print_ext('Starting training. train_batch_size:', self.train_batch_size, 'test_batch_size:', self.test_batch_size)
+                self.print_ext('Starting training. train_batch_size:', self.input.train_batch_size, 'test_batch_size:', self.input.test_batch_size)
                 wasKeyboardInterrupt = False
                 try:
                     total_training = 0.0
                     total_testing = 0.0
                     total_summary = 0.0
                     start_at = time.time()
-                    while self.net.global_step.eval() <= FLAGS.num_iterations:
+                    while self.net.global_step.eval() < FLAGS.num_iterations:
                         if self.net.global_step.eval() % FLAGS.snapshot_iter == 0 and FLAGS.save_checkpoints:
                             self.save_model(sess, saver)
                             

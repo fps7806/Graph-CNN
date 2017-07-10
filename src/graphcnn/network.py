@@ -14,6 +14,7 @@ class GraphCNNNetwork(object):
         self.current_mask = None
         self.labels = None
         self.network_debug = False
+        self.current_pos = None
         
     def create_network(self, input):
         self.current_V = input[0]
@@ -69,7 +70,7 @@ class GraphCNNNetwork(object):
             self.current_mask = None
             
             if self.current_pos is not None:
-                sliced_P = tf.slice(tf.squeeze(P), [self.visual_indices, 0, 0], [1, tf.shape(self.current_pos)[1], -1])
+                sliced_P = tf.slice(P, [self.visual_indices, 0, 0], [1, tf.shape(self.current_pos)[1], -1])
                 self.current_pos = tf.matmul(sliced_P, self.current_pos, transpose_a=True)
             
             if with_bn:
@@ -124,7 +125,7 @@ class GraphCNNNetwork(object):
             try:
                 drawing_lock.acquire()
                 fig = plt.figure(figsize=(8, 8))
-                display_graph(V, A, pos)
+                pos = display_graph(V, A, pos)
                 fig.canvas.draw()
                 ncols, nrows = fig.canvas.get_width_height()
                 img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(1, nrows, ncols, 3)

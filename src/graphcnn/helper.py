@@ -2,6 +2,8 @@ from __future__ import print_function
 from datetime import datetime
 import os
 import numpy as np
+import tensorflow as tf
+from tensorflow.python.training import queue_runner
 
 class GraphCNNKeys(object):
     TRAIN_SUMMARIES = "train_summaries"
@@ -31,3 +33,15 @@ def make_print(*args):
     for i in range(len(args)):
         result[i].set_shape(args[i].get_shape())
     return result
+
+
+
+# This function is used to create tf.cond compatible tf.train.batch alternative
+def make_batch_queue(input, capacity, num_threads=1):
+    queue = tf.PaddingFIFOQueue(capacity=capacity, dtypes=[s.dtype for s in input], shapes=[s.get_shape() for s in input])
+    tf.summary.scalar("fraction_of_%d_full" % capacity,
+           tf.cast(queue.size(), tf.float32) *
+           (1. / capacity))
+    enqueue_ops = [queue.enqueue(input)]*num_threads
+    queue_runner.add_queue_runner(queue_runner.QueueRunner(queue, enqueue_ops))
+    return queue
