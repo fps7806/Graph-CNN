@@ -3,8 +3,7 @@ import scipy.io
 import numpy as np
 import datetime
 import graphcnn
-import graphcnn.setup.helper
-import graphcnn.setup as setup
+from .helper import *
 
 chemical_datasets_list = ['DD', 'ENZYMES', 'MUTAG', 'NCI1', 'NCI109']
 
@@ -12,9 +11,9 @@ def load_protein_dataset(dataset_name):
     if dataset_name not in chemical_datasets_list:
         print_ext('Dataset doesn\'t exist. Options:', chemical_datasets_list)
         return
-    setup.helper.locate_or_download_file('proteins/proteins_data.zip', 'http://mlcb.is.tuebingen.mpg.de/Mitarbeiter/Nino/Graphkernels/data.zip')
-    setup.helper.locate_or_extract_file('proteins/proteins_data.zip', 'proteins/data')
-    mat = scipy.io.loadmat(setup.helper.get_file_location('proteins/data/%s.mat' % dataset_name))
+    locate_or_download_file('proteins/proteins_data.zip', 'http://mlcb.is.tuebingen.mpg.de/Mitarbeiter/Nino/Graphkernels/data.zip')
+    locate_or_extract_file('proteins/proteins_data.zip', 'proteins/data')
+    mat = scipy.io.loadmat(get_file_location('proteins/data/%s.mat' % dataset_name))
     
     input = mat[dataset_name]
     labels = mat['l' + dataset_name.lower()]

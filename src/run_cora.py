@@ -1,34 +1,36 @@
-import graphcnn.setup.cora as sc
-from graphcnn.experiment import *
+import tensorflow as tf
 
-dataset = sc.load_cora_dataset()
+tf.app.flags.DEFINE_integer('num_iterations', 1500, "Number of samples to process in a training batch.")
 
-class CoraExperiment():
-    def create_network(self, net, input):
-        net.create_network(input)
-        net.make_embedding_layer(256)
-        net.make_dropout_layer()
-        
-        net.make_graphcnn_layer(48)
-        net.make_dropout_layer()
-        net.make_embedding_layer(32)
-        net.make_dropout_layer()
-        
-        
-        net.make_graphcnn_layer(48)
-        net.make_dropout_layer()
-        net.make_embedding_layer(32)
-        net.make_dropout_layer()
-        
-        net.make_graphcnn_layer(7, name='final', with_bn=False, with_act_func = False)
-        
-exp = SingleGraphCNNExperiment('Cora', 'cora', CoraExperiment())
+import graphcnn
+from graphcnn import FLAGS
 
-exp.num_iterations = 1000
-exp.optimizer = 'adam'
-exp.debug = True
-        
-exp.preprocess_data(dataset)
+dataset = graphcnn.setup.load_cora_dataset()
 
-acc, std = exp.run_kfold_experiments(no_folds=10)
-print_ext('10-fold: %.2f (+- %.2f)' % (acc, std))
+def main(argv=None):
+    class CoraExperiment():
+        def create_network(self, net, input):
+            net.create_network(input)
+            net.make_embedding_layer(256)
+            net.make_dropout_layer()
+            
+            net.make_graphcnn_layer(48)
+            net.make_dropout_layer()
+            net.make_embedding_layer(32)
+            net.make_dropout_layer()
+            
+            net.make_graphcnn_layer(48)
+            net.make_dropout_layer()
+            net.make_embedding_layer(32)
+            net.make_dropout_layer()
+            
+            net.make_graphcnn_layer(7, name='final', with_bn=False, with_act_func = False)
+            
+    exp = graphcnn.SingleGraphCNNExperiment('Cora', 'cora', CoraExperiment())
+    exp.input = dataset
+            
+    acc, std = exp.run_kfold_experiments()
+    print_ext('%d-fold: %.2f (+- %.2f)' % (FLAGS.NO_FOLDS, acc, std))
+
+if __name__ == '__main__':
+    tf.app.run()

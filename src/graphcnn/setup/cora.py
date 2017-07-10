@@ -2,19 +2,19 @@ from graphcnn.helper import *
 import scipy.io
 import numpy as np
 import datetime
-import graphcnn.setup.helper
-import graphcnn.setup as setup
+from .helper import *
+import graphcnn
 
 
 def load_cora_dataset():
-    setup.helper.locate_or_download_file('cora.tgz', 'http://www.cs.umd.edu/~sen/lbc-proj/data/cora.tgz')
-    setup.helper.locate_or_extract_file('cora.tgz', 'cora')
+    locate_or_download_file('cora.tgz', 'http://www.cs.umd.edu/~sen/lbc-proj/data/cora.tgz')
+    locate_or_extract_file('cora.tgz', 'cora')
     
     keys = []
     features = []
     labels = []
     categories = []
-    with open(setup.helper.get_file_location('cora/cora.content'), 'r') as file:
+    with open(get_file_location('cora/cora.content'), 'r') as file:
         for line in file:
             s = line[:-1].split('\t')
             keys.append(s[0])
@@ -25,7 +25,7 @@ def load_cora_dataset():
         labels = np.array(labels)
         features = np.array(features).reshape((len(keys), -1))
     
-    with open(setup.helper.get_file_location('cora/cora.cites'), 'r') as file:
+    with open(get_file_location('cora/cora.cites'), 'r') as file:
         adj_mat = np.zeros((len(labels), 2, len(labels)))
         for line in file:
             s = line[:-1].split('\t')
@@ -33,5 +33,5 @@ def load_cora_dataset():
             b = keys.index(s[1])
             adj_mat[a, 0, b] = 1;
             adj_mat[b, 1, a] = 1;
-    return features, adj_mat, labels
-    #adj_mat = adj_mat.reshape((-1, len(labels)))
+
+    return graphcnn.SingleGraphInputPipeline(vertices = features, adjacency=adj_mat, labels=labels)

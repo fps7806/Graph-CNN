@@ -6,11 +6,9 @@ tf.app.flags.DEFINE_integer('num_iterations', 1500, "Number of samples to proces
 
 import graphcnn
 from graphcnn import FLAGS
-import graphcnn.setup.chemical as sc
-from graphcnn.experiment import *
 
 def main(argv=None):
-	dataset = sc.load_protein_dataset('NCI1')
+	dataset = graphcnn.setup.load_protein_dataset('NCI1')
 
 	# Decay value for BatchNorm layers, seems to work better with 0.3
 	class NCI1Experiment(object):
@@ -30,7 +28,7 @@ def main(argv=None):
 	        net.make_fc_layer(256)
 	        net.make_fc_layer(2, name='final', with_bn=False, with_act_func = False)
 	        
-	exp = GraphCNNExperiment('NCI1', 'nci1', NCI1Experiment())
+	exp = graphcnn.GraphCNNExperiment('NCI1', 'nci1', NCI1Experiment())
 	exp.input = dataset
 
 	acc, std = exp.run_kfold_experiments()
