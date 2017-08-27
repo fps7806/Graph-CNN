@@ -6,3 +6,5 @@ datasets/
 results/
 *.png
 *.pyc
+*.so
+env

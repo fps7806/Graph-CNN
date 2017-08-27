@@ -3,6 +3,7 @@ from .helper import *
 import tensorflow as tf
 import numpy as np
 import math
+from . import ops
 from tensorflow.contrib.layers.python.layers import utils
          
 def make_variable(name, shape, initializer=tf.truncated_normal_initializer(), regularizer=None):
@@ -75,9 +76,8 @@ def make_graphcnn_layer(V, A, no_filters, name=None):
         W_I = make_variable_with_weight_decay('weights_I', [no_features, no_filters], stddev=math.sqrt(1.0/(no_features*(no_A+1)*FLAGS.INIT_FACTOR)))
         b = make_bias_variable('bias', [no_filters])
 
+        n = ops.GraphConvolution(V, A)
         A_shape = tf.shape(A)
-        A_reshape = tf.reshape(A, tf.stack([-1, A_shape[1]*no_A, A_shape[1]]))
-        n = tf.matmul(A_reshape, V)
         n = tf.reshape(n, [-1, A_shape[1], no_A*no_features])
         result = batch_mat_mult(n, W) + batch_mat_mult(V, W_I) + b
         return result

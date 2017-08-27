@@ -33,8 +33,6 @@ class InputPipeline(object):
         
         self.no_samples = self.graph_labels.shape[0]
         
-        single_sample = [self.graph_vertices, self.graph_adjacency, self.graph_labels, self.graph_size]
-
     # Create CV information
     def set_kfold(self, no_folds = 10, fold_id = 0):
         inst = KFold(n_splits = no_folds, shuffle=True, random_state=125)
